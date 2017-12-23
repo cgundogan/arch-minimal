@@ -1,6 +1,11 @@
 #! /bin/bash
 set -e
 
+if [ $EUID != 0 ]; then
+    sudo "$0" "$@"
+    exit $?
+fi
+
 ARCHIVE=$(basename $1)
 wget $1 && wget $1.sig
 gpg --verify ${ARCHIVE}.sig ${ARCHIVE} || {
@@ -12,13 +17,13 @@ tar -xf ${ARCHIVE}
 ROOT=$(tar -tf ${ARCHIVE} | head -1)
 ROOT=${ROOT%/}
 
-PKGIGNORE=(
-    cryptsetup
+PKGRM=(
     dhcpcd
-    device-mapper
     gawk
+    gettext
     iproute2
     jfsutils
+    licenses
     linux
     lvm2
     man-db
@@ -38,33 +43,27 @@ PKGIGNORE=(
     xfsprogs
 )
 
-sudo ./${ROOT}/bin/arch-chroot ${ROOT} << EOF
+./${ROOT}/bin/arch-chroot ${ROOT} << EOF
     echo 'Server = https://mirrors.kernel.org/archlinux/\$repo/os/\$arch' > /etc/pacman.d/mirrorlist
     pacman-key --init
     pacman-key --populate archlinux
     pacman -Syu --noconfirm base
-    pacman -Rdds --noconfirm ${PKGIGNORE[*]}
+    pacman -Rddssnu --noconfirm ${PKGRM[*]}
     yes | pacman -Scc
-    rm -rf /usr/share/man/*
-    rm -rf /usr/share/doc/*
-    rm -rf /usr/share/info/*
-    rm -rf /usr/lib/udev/*
-    rm -rf /var/lib/pacman/sync/*
-    rm -rf /root/.bash_history
-    find /usr/share/locale/* ! -name 'en_US' -type d -exec rm -rf {} +
-    find /usr/share/i18n/locales/* ! -name 'en_US' -type d -exec rm -rf {} +
+    rm -rf /usr/share/{doc,info,man,perl5/core_perl}/*
+    find /usr/share/locale/* ! -name 'en_US' ! -name 'en_GB' -type d -exec rm -rf {} +
+    find /usr/share/i18n/locales/* ! -name 'en_US' ! -name 'en_GB' -type d -exec rm -rf {} +
     find /usr/share/terminfo/* ! -name 'xterm' -type f -exec rm -f {} +
     find /usr/share/i18n/charmaps/* ! -name 'UTF-8.gz' -type f -exec rm -f {} +
-    find /usr/share/i18n/locales/* ! -name 'en_US' -type f -exec rm -f {} +
     find / -regextype posix-extended -regex ".+\.pac(new|save)" -exec rm -f {} +
-    echo "en_US.UTF-8" > /etc/locale.gen
-    locale-gen
+    rm -rf /usr/lib/udev/* /var/lib/pacman/sync/*
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
     rm -rf /root/*
     exit
 EOF
 
 DEV=./${ROOT}/dev
-sudo bash << EOF
+bash << EOF
 	rm -rf $DEV
 	mkdir -p $DEV
 	mknod -m 0666 $DEV/null c 1 3
@@ -82,5 +81,5 @@ sudo bash << EOF
 	ln -sf /proc/self/fd $DEV/fd
 EOF
 
-sudo tar --numeric-owner --xattrs --acls -C ${ROOT} -c . | docker import - arch-minimal
+tar --numeric-owner --xattrs --acls -C ${ROOT} -c . | docker import - arch-minimal
 docker run --rm -t arch-minimal echo Success.
